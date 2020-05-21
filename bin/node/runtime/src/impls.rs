@@ -18,7 +18,7 @@
 
 use node_primitives::Balance;
 use sp_runtime::traits::{Convert, Saturating};
-use sp_runtime::{Fixed64, Perbill};
+use sp_runtime::{FixedPointNumber, Fixed128, Perquintill};
 use frame_support::{traits::{OnUnbalanced, Currency, Get}, weights::Weight};
 use crate::{Balances, System, Authorship, MaximumBlockWeight, NegativeImbalance};
 
@@ -78,15 +78,14 @@ impl<T: Get<Perbill>> Convert<Fixed64, Fixed64> for TargetedFeeAdjustment<T> {
 		// determines if the first_term is positive
 		let positive = block_weight >= target_weight;
 		let diff_abs = block_weight.max(target_weight) - block_weight.min(target_weight);
-		// diff is within u32, safe.
-		let diff = Fixed64::from_rational(diff_abs as i64, max_weight as u64);
+		// safe, diff_abs cannot exceed u64.
+		let diff = Fixed128::saturating_from_rational(diff_abs, max_weight.max(1));
 		let diff_squared = diff.saturating_mul(diff);
 
 		// 0.00004 = 4/100_000 = 40_000/10^9
-		let v = Fixed64::from_rational(4, 100_000);
-		// 0.00004^2 = 16/10^10 ~= 2/10^9. Taking the future /2 into account, then it is just 1
-		// parts from a billionth.
-		let v_squared_2 = Fixed64::from_rational(1, 1_000_000_000);
+		let v = Fixed128::saturating_from_rational(4, 100_000);
+		// 0.00004^2 = 16/10^10 Taking the future /2 into account... 8/10^10
+		let v_squared_2 = Fixed128::saturating_from_rational(8, 10_000_000_000u64);
 
 		let first_term = v.saturating_mul(diff);
 		// It is very unlikely that this will exist (in our poor perbill estimate) but we are giving
@@ -107,7 +106,7 @@ impl<T: Get<Perbill>> Convert<Fixed64, Fixed64> for TargetedFeeAdjustment<T> {
 				// multiplier. While at -1, it means that the network is so un-congested that all
 				// transactions have no weight fee. We stop here and only increase if the network
 				// became more busy.
-				.max(Fixed64::from_rational(-1, 1))
+				.max(Fixed128::saturating_from_integer(-1))
 		}
 	}
 }
@@ -118,7 +117,7 @@ mod tests {
 	use sp_runtime::assert_eq_error_rate;
 	use crate::{MaximumBlockWeight, AvailableBlockRatio, Runtime};
 	use crate::{constants::currency::*, TransactionPayment, TargetBlockFullness};
-	use frame_support::weights::Weight;
+	use frame_support::weights::{Weight, WeightToFeePolynomial};
 
 	fn max() -> Weight {
 		MaximumBlockWeight::get()
@@ -141,7 +140,7 @@ mod tests {
 		let s = block_weight;
 
 		let fm = v * (s/m - ss/m) + v.powi(2) * (s/m - ss/m).powi(2) / 2.0;
-		let addition_fm = Fixed64::from_parts((fm * 1_000_000_000_f32).round() as i64);
+		let addition_fm = Fixed128::from_inner((fm * Fixed128::accuracy() as f64).round() as i128);
 		previous.saturating_add(addition_fm)
 	}
 
@@ -160,7 +159,7 @@ mod tests {
 
 	#[test]
 	fn fee_multiplier_update_poc_works() {
-		let fm = Fixed64::from_rational(0, 1);
+		let fm = Fixed128::saturating_from_rational(0, 1);
 		let test_set = vec![
 			(0, fm.clone()),
 			(100, fm.clone()),
@@ -171,9 +170,10 @@ mod tests {
 		test_set.into_iter().for_each(|(w, fm)| {
 			run_with_system_weight(w, || {
 				assert_eq_error_rate!(
-					fee_multiplier_update(w, fm).into_inner(),
-					TargetedFeeAdjustment::<TargetBlockFullness>::convert(fm).into_inner(),
-					5,
+					fee_multiplier_update(w, fm),
+					TargetedFeeAdjustment::<TargetBlockFullness>::convert(fm),
+					// Error is only 1 in 10^18
+					Fixed128::from_inner(1),
 				);
 			})
 		})
@@ -189,7 +189,7 @@ mod tests {
 			loop {
 				let next = TargetedFeeAdjustment::<TargetBlockFullness>::convert(fm);
 				fm = next;
-				if fm == Fixed64::from_rational(-1, 1) { break; }
+				if fm == Fixed128::saturating_from_integer(-1) { break; }
 				iterations += 1;
 			}
 			println!("iteration {}, new fm = {:?}. Weight fee is now zero", iterations, fm);
@@ -228,7 +228,7 @@ mod tests {
 				fm = next;
 				iterations += 1;
 				let fee = <Runtime as pallet_transaction_payment::Trait>::WeightToFee::convert(tx_weight);
-				let adjusted_fee = fm.saturated_multiply_accumulate(fee);
+				let adjusted_fee = fm.saturating_mul_acc_int(fee);
 				println!(
 					"iteration {}, new fm = {:?}. Fee at this point is: {} units / {} millicents, \
 					{} cents, {} dollars",
@@ -316,8 +316,8 @@ mod tests {
 			);
 			// ...
 			assert_eq!(
-				TargetedFeeAdjustment::<TargetBlockFullness>::convert(feemul(1_000_000_000 * -1)),
-				feemul(-1_000_000_000)
+				TargetedFeeAdjustment::<TargetBlockFullness>::convert(Fixed128::saturating_from_integer(-1)),
+				Fixed128::saturating_from_integer(-1)
 			);
 		})
 	}
@@ -326,7 +326,7 @@ mod tests {
 	fn weight_to_fee_should_not_overflow_on_large_weights() {
 		let kb = 1024 as Weight;
 		let mb = kb * kb;
-		let max_fm = Fixed64::from_natural(i64::max_value());
+		let max_fm = Fixed128::saturating_from_integer(i128::max_value());
 
 		// check that for all values it can compute, correctly.
 		vec![
@@ -343,9 +343,9 @@ mod tests {
 			Weight::max_value(),
 		].into_iter().for_each(|i| {
 			run_with_system_weight(i, || {
-				let next = TargetedFeeAdjustment::<TargetBlockFullness>::convert(Fixed64::default());
-				let truth = fee_multiplier_update(i, Fixed64::default());
-				assert_eq_error_rate!(truth.into_inner(), next.into_inner(), 5);
+				let next = TargetedFeeAdjustment::<TargetBlockFullness>::convert(Fixed128::default());
+				let truth = fee_multiplier_update(i, Fixed128::default());
+				assert_eq_error_rate!(truth, next, Fixed128::from_inner(50_000_000));
 			});
 		});
 
