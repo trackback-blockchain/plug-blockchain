@@ -34,6 +34,7 @@ sp-std = { version = "2.0.0-alpha.5", default-features = false, path = "../../..
 sp-transaction-pool = { version = "2.0.0-alpha.5", default-features = false, path = "../../../primitives/transaction-pool" }
 sp-version = { version = "2.0.0-alpha.5", default-features = false, path = "../../../primitives/version" }
 prml-doughnut = { path = "../../../prml/doughnut", default-features = false }
+prml-validator-manager = { path = "../../../prml/validator-manager", default-features = false }
 
 template = { version = "2.0.0-alpha.5", default-features = false, path = "../pallets/template", package = "pallet-template" }
 
@@ -68,5 +69,6 @@ std = [
 	"timestamp/std",
 	"transaction-payment/std",
 	"prml-doughnut/std",
+	"prml-validator-manager/std",
 	"template/std",
 ]

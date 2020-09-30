@@ -3722,6 +3722,7 @@ dependencies = [
  "pallet-transaction-payment",
  "parity-scale-codec",
  "prml-doughnut",
+ "prml-validator-manager",
  "serde",
  "sp-api",
  "sp-block-builder",

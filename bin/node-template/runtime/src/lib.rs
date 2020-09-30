@@ -2,43 +2,42 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 // `construct_runtime!` does a lot of recursion and requires us to increase the limit to 256.
-#![recursion_limit="256"]
+#![recursion_limit = "256"]
 
 // Make the WASM binary available.
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
-use sp_std::prelude::*;
-use sp_core::OpaqueMetadata;
-use sp_runtime::{
-	ApplyExtrinsicResult, generic, create_runtime_str, impl_opaque_keys, MultiSignature,
-	transaction_validity::{TransactionValidity, TransactionSource},
-};
-use sp_runtime::traits::{
-	BlakeTwo256, Block as BlockT, IdentityLookup, Verify, ConvertInto, IdentifyAccount
-};
+use grandpa::fg_primitives;
+use grandpa::AuthorityList as GrandpaAuthorityList;
 use sp_api::impl_runtime_apis;
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
-use grandpa::AuthorityList as GrandpaAuthorityList;
-use grandpa::fg_primitives;
-use sp_version::RuntimeVersion;
+use sp_core::OpaqueMetadata;
+use sp_runtime::traits::{
+	BlakeTwo256, Block as BlockT, ConvertInto, IdentifyAccount, IdentityLookup, Verify,
+};
+use sp_runtime::{
+	create_runtime_str, generic, impl_opaque_keys,
+	transaction_validity::{TransactionSource, TransactionValidity},
+	ApplyExtrinsicResult, MultiSignature,
+};
+use sp_std::prelude::*;
 #[cfg(feature = "std")]
 use sp_version::NativeVersion;
+use sp_version::RuntimeVersion;
 
 use prml_doughnut::{DoughnutRuntime, PlugDoughnut};
 
 // A few exports that help ease life for downstream crates.
+pub use balances::Call as BalancesCall;
+pub use frame_support::{
+	additional_traits::DummyDispatchVerifier, construct_runtime, parameter_types,
+	traits::Randomness, weights::Weight, StorageValue,
+};
 #[cfg(any(feature = "std", test))]
 pub use sp_runtime::BuildStorage;
+pub use sp_runtime::{Doughnut, Perbill, Permill};
 pub use timestamp::Call as TimestampCall;
-pub use balances::Call as BalancesCall;
-pub use sp_runtime::{Permill, Perbill, Doughnut};
-pub use frame_support::{
-	StorageValue, construct_runtime, parameter_types,
-	traits::Randomness,
-	weights::Weight,
-	additional_traits::DummyDispatchVerifier,
-};
 
 /// Importing a template pallet
 pub use template;
@@ -256,6 +255,7 @@ construct_runtime!(
 		Sudo: sudo::{Module, Call, Config<T>, Storage, Event<T>},
 		// Used for the module template in `./template.rs`
 		TemplateModule: template::{Module, Call, Storage, Event<T>},
+		ValidatorManager: prml_validator_manager::{Module, Call, Storage, Config<T>, Event<T>},
 	}
 );
 
@@ -277,14 +277,15 @@ pub type SignedExtra = (
 	system::CheckEra<Runtime>,
 	system::CheckNonce<Runtime>,
 	system::CheckWeight<Runtime>,
-	transaction_payment::ChargeTransactionPayment<Runtime>
+	transaction_payment::ChargeTransactionPayment<Runtime>,
 );
 /// Unchecked extrinsic type as expected by this runtime.
 pub type UncheckedExtrinsic = generic::UncheckedExtrinsic<Address, Call, Signature, SignedExtra>;
 /// Extrinsic type that has already been checked.
 pub type CheckedExtrinsic = generic::CheckedExtrinsic<AccountId, Call, SignedExtra>;
 /// Executive: handles dispatch to the various modules.
-pub type Executive = frame_executive::Executive<Runtime, Block, system::ChainContext<Runtime>, Runtime, AllModules>;
+pub type Executive =
+	frame_executive::Executive<Runtime, Block, system::ChainContext<Runtime>, Runtime, AllModules>;
 
 impl_runtime_apis! {
 	impl sp_api::Core<Block> for Runtime {
@@ -373,4 +374,40 @@ impl_runtime_apis! {
 			Grandpa::grandpa_authorities()
 		}
 	}
+}
+
+parameter_types! {
+	// Set the minimum number of validators here - root will not be able to remove
+	// validators if the number of validators are less or equal to this number
+	pub const MinimumValidatorCount: u32 = 1;
+}
+
+impl prml_validator_manager::Trait for Runtime {
+	type Event = Event;
+	type MinimumValidatorCount = MinimumValidatorCount;
+}
+
+impl pallet_aura::Trait for Runtime {
+	type AuthorityId = AuraId;
+}
+
+impl pallet_grandpa::Trait for Runtime {
+	type Event = Event;
+}
+
+parameter_types! {
+	pub const DisabledValidatorsThreshold: Perbill = Perbill::from_percent(33);
+	pub const Period: BlockNumber = 10;
+	pub const Offset: BlockNumber = 0;
+}
+
+impl pallet_session::Trait for Runtime {
+	type SessionManager = ValidatorManager;
+	type SessionHandler = <opaque::SessionKeys as OpaqueKeys>::KeyTypeIdProviders;
+	type ShouldEndSession = pallet_session::PeriodicSessions<Period, Offset>;
+	type Event = Event;
+	type Keys = opaque::SessionKeys;
+	type ValidatorId = <Self as frame_system::Trait>::AccountId;
+	type ValidatorIdOf = ConvertInto;
+	type DisabledValidatorsThreshold = DisabledValidatorsThreshold;
 }
