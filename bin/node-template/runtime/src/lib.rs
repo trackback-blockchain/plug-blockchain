@@ -14,7 +14,7 @@ use sp_api::impl_runtime_apis;
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 use sp_core::OpaqueMetadata;
 use sp_runtime::traits::{
-	BlakeTwo256, Block as BlockT, ConvertInto, IdentifyAccount, IdentityLookup, Verify,
+	BlakeTwo256, Block as BlockT, ConvertInto, IdentifyAccount, IdentityLookup, OpaqueKeys, Verify,
 };
 use sp_runtime::{
 	create_runtime_str, generic, impl_opaque_keys,
@@ -387,14 +387,6 @@ impl prml_validator_manager::Trait for Runtime {
 	type MinimumValidatorCount = MinimumValidatorCount;
 }
 
-impl pallet_aura::Trait for Runtime {
-	type AuthorityId = AuraId;
-}
-
-impl pallet_grandpa::Trait for Runtime {
-	type Event = Event;
-}
-
 parameter_types! {
 	pub const DisabledValidatorsThreshold: Perbill = Perbill::from_percent(33);
 	pub const Period: BlockNumber = 10;
@@ -407,7 +399,7 @@ impl pallet_session::Trait for Runtime {
 	type ShouldEndSession = pallet_session::PeriodicSessions<Period, Offset>;
 	type Event = Event;
 	type Keys = opaque::SessionKeys;
-	type ValidatorId = <Self as frame_system::Trait>::AccountId;
+	type ValidatorId = <Self as system::Trait>::AccountId;
 	type ValidatorIdOf = ConvertInto;
 	type DisabledValidatorsThreshold = DisabledValidatorsThreshold;
 }
