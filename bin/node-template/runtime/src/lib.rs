@@ -26,6 +26,7 @@ use sp_std::prelude::*;
 use sp_version::NativeVersion;
 use sp_version::RuntimeVersion;
 
+use pallet_session;
 use prml_doughnut::{DoughnutRuntime, PlugDoughnut};
 
 // A few exports that help ease life for downstream crates.
@@ -256,6 +257,7 @@ construct_runtime!(
 		// Used for the module template in `./template.rs`
 		TemplateModule: template::{Module, Call, Storage, Event<T>},
 		ValidatorManager: prml_validator_manager::{Module, Call, Storage, Config<T>, Event<T>},
+		Session: pallet_session::{Module, Call, Storage, Config, Event},
 	}
 );
 
@@ -402,4 +404,5 @@ impl pallet_session::Trait for Runtime {
 	type ValidatorId = <Self as system::Trait>::AccountId;
 	type ValidatorIdOf = ConvertInto;
 	type DisabledValidatorsThreshold = DisabledValidatorsThreshold;
+	type NextSessionRotation = ();
 }

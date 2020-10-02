@@ -99,20 +99,26 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use sp_std::{prelude::*, marker::PhantomData, ops::{Sub, Rem}};
 use codec::Decode;
-use sp_runtime::{KeyTypeId, Perbill, RuntimeAppPublic, BoundToRuntimeAppPublic};
-use sp_runtime::traits::{Convert, Zero, Member, OpaqueKeys, Saturating};
-use sp_staking::SessionIndex;
 use frame_support::{
-	ensure, decl_module, decl_event, decl_storage, decl_error, ConsensusEngineId, Parameter,
+	decl_error, decl_event, decl_module, decl_storage,
+	dispatch::{self, DispatchError, DispatchResult},
+	ensure,
 	traits::{
-		Get, FindAuthor, ValidatorRegistration, EstimateNextSessionRotation, EstimateNextNewSession,
+		EstimateNextNewSession, EstimateNextSessionRotation, FindAuthor, Get, ValidatorRegistration,
 	},
-	dispatch::{self, DispatchResult, DispatchError},
-	weights::{Weight, SimpleDispatchInfo, WeighData},
+	weights::{SimpleDispatchInfo, WeighData, Weight},
+	ConsensusEngineId, Parameter,
 };
 use frame_system::{self as system, ensure_signed};
+use sp_runtime::traits::{Convert, Member, OpaqueKeys, Saturating, Zero};
+use sp_runtime::{BoundToRuntimeAppPublic, KeyTypeId, Perbill, RuntimeAppPublic};
+use sp_staking::SessionIndex;
+use sp_std::{
+	marker::PhantomData,
+	ops::{Rem, Sub},
+	prelude::*,
+};
 
 #[cfg(test)]
 mod mock;
@@ -133,16 +139,14 @@ pub trait ShouldEndSession<BlockNumber> {
 /// The first session will have length of `Offset`, and
 /// the following sessions will have length of `Period`.
 /// This may prove nonsensical if `Offset` >= `Period`.
-pub struct PeriodicSessions<
-	Period,
-	Offset,
->(PhantomData<(Period, Offset)>);
+pub struct PeriodicSessions<Period, Offset>(PhantomData<(Period, Offset)>);
 
 impl<
-	BlockNumber: Rem<Output=BlockNumber> + Sub<Output=BlockNumber> + Zero + PartialOrd,
-	Period: Get<BlockNumber>,
-	Offset: Get<BlockNumber>,
-> ShouldEndSession<BlockNumber> for PeriodicSessions<Period, Offset> {
+		BlockNumber: Rem<Output = BlockNumber> + Sub<Output = BlockNumber> + Zero + PartialOrd,
+		Period: Get<BlockNumber>,
+		Offset: Get<BlockNumber>,
+	> ShouldEndSession<BlockNumber> for PeriodicSessions<Period, Offset>
+{
 	fn should_end_session(now: BlockNumber) -> bool {
 		let offset = Offset::get();
 		now >= offset && ((now - offset) % Period::get()).is_zero()
@@ -150,19 +154,23 @@ impl<
 }
 
 impl<
-	BlockNumber: Rem<Output=BlockNumber> + Sub<Output=BlockNumber> + Zero + PartialOrd + Saturating + Clone,
-	Period: Get<BlockNumber>,
-	Offset: Get<BlockNumber>,
-> EstimateNextSessionRotation<BlockNumber> for PeriodicSessions<Period, Offset> {
+		BlockNumber: Rem<Output = BlockNumber>
+			+ Sub<Output = BlockNumber>
+			+ Zero
+			+ PartialOrd
+			+ Saturating
+			+ Clone,
+		Period: Get<BlockNumber>,
+		Offset: Get<BlockNumber>,
+	> EstimateNextSessionRotation<BlockNumber> for PeriodicSessions<Period, Offset>
+{
 	fn estimate_next_session_rotation(now: BlockNumber) -> Option<BlockNumber> {
 		let offset = Offset::get();
 		let period = Period::get();
 		Some(if now > offset {
 			let block_after_last_session = (now.clone() - offset) % period.clone();
 			if block_after_last_session > Zero::zero() {
-				now.saturating_add(
-					period.saturating_sub(block_after_last_session)
-				)
+				now.saturating_add(period.saturating_sub(block_after_last_session))
 			} else {
 				Zero::zero()
 			}
@@ -200,7 +208,9 @@ pub trait SessionManager<ValidatorId> {
 }
 
 impl<A> SessionManager<A> for () {
-	fn new_session(_: SessionIndex) -> Option<Vec<A>> { None }
+	fn new_session(_: SessionIndex) -> Option<Vec<A>> {
+		None
+	}
 	fn start_session(_: SessionIndex) {}
 	fn end_session(_: SessionIndex) {}
 }
@@ -246,7 +256,9 @@ pub trait OneSessionHandler<ValidatorId>: BoundToRuntimeAppPublic {
 	type Key: Decode + Default + RuntimeAppPublic;
 
 	fn on_genesis_session<'a, I: 'a>(validators: I)
-		where I: Iterator<Item=(&'a ValidatorId, Self::Key)>, ValidatorId: 'a;
+	where
+		I: Iterator<Item = (&'a ValidatorId, Self::Key)>,
+		ValidatorId: 'a;
 
 	/// Session set has changed; act appropriately. Note that this can be called
 	/// before initialization of your module.
@@ -257,12 +269,10 @@ pub trait OneSessionHandler<ValidatorId>: BoundToRuntimeAppPublic {
 	///
 	/// The `validators` are the validators of the incoming session, and `queued_validators`
 	/// will follow.
-	fn on_new_session<'a, I: 'a>(
-		changed: bool,
-		validators: I,
-		queued_validators: I,
-	) where I: Iterator<Item=(&'a ValidatorId, Self::Key)>, ValidatorId: 'a;
-
+	fn on_new_session<'a, I: 'a>(changed: bool, validators: I, queued_validators: I)
+	where
+		I: Iterator<Item = (&'a ValidatorId, Self::Key)>,
+		ValidatorId: 'a;
 
 	/// A notification for end of the session.
 	///
@@ -552,7 +562,8 @@ impl<T: Trait> Module<T> {
 
 		// Get queued session keys and validators.
 		let session_keys = <QueuedKeys<T>>::get();
-		let validators = session_keys.iter()
+		let validators = session_keys
+			.iter()
 			.map(|(validator, _)| validator.clone())
 			.collect::<Vec<_>>();
 		<Validators<T>>::put(&validators);
@@ -570,16 +581,15 @@ impl<T: Trait> Module<T> {
 
 		// Get next validator set.
 		let maybe_next_validators = T::SessionManager::new_session(session_index + 1);
-		let (next_validators, next_identities_changed)
-			= if let Some(validators) = maybe_next_validators
-		{
-			// NOTE: as per the documentation on `OnSessionEnding`, we consider
-			// the validator set as having changed even if the validators are the
-			// same as before, as underlying economic conditions may have changed.
-			(validators, true)
-		} else {
-			(<Validators<T>>::get(), false)
-		};
+		let (next_validators, next_identities_changed) =
+			if let Some(validators) = maybe_next_validators {
+				// NOTE: as per the documentation on `OnSessionEnding`, we consider
+				// the validator set as having changed even if the validators are the
+				// same as before, as underlying economic conditions may have changed.
+				(validators, true)
+			} else {
+				(<Validators<T>>::get(), false)
+			};
 
 		// Queue next session keys.
 		let (queued_amalgamated, next_changed) = {
@@ -589,18 +599,21 @@ impl<T: Trait> Module<T> {
 
 			let mut now_session_keys = session_keys.iter();
 			let mut check_next_changed = |keys: &T::Keys| {
-				if changed { return }
+				if changed {
+					return;
+				}
 				// since a new validator set always leads to `changed` starting
 				// as true, we can ensure that `now_session_keys` and `next_validators`
 				// have the same length. this function is called once per iteration.
 				if let Some(&(_, ref old_keys)) = now_session_keys.next() {
 					if old_keys != keys {
 						changed = true;
-						return
+						return;
 					}
 				}
 			};
-			let queued_amalgamated = next_validators.into_iter()
+			let queued_amalgamated = next_validators
+				.into_iter()
 				.map(|a| {
 					let k = Self::load_keys(&a).unwrap_or_default();
 					check_next_changed(&k);
@@ -618,11 +631,7 @@ impl<T: Trait> Module<T> {
 		Self::deposit_event(Event::NewSession(session_index));
 
 		// Tell everyone about the new session keys.
-		T::SessionHandler::on_new_session::<T::Keys>(
-			changed,
-			&session_keys,
-			&queued_amalgamated,
-		);
+		T::SessionHandler::on_new_session::<T::Keys>(changed, &session_keys, &queued_amalgamated);
 	}
 
 	/// Disable the validator of index `i`.
@@ -656,7 +665,11 @@ impl<T: Trait> Module<T> {
 	/// session is already disabled.
 	/// If used with the staking module it allows to force a new era in such case.
 	pub fn disable(c: &T::ValidatorId) -> sp_std::result::Result<bool, ()> {
-		Self::validators().iter().position(|i| i == c).map(Self::disable_index).ok_or(())
+		Self::validators()
+			.iter()
+			.position(|i| i == c)
+			.map(Self::disable_index)
+			.ok_or(())
 	}
 
 	/// Perform the set_key operation, checking for duplicates. Does not set `Changed`.
@@ -678,7 +691,10 @@ impl<T: Trait> Module<T> {
 	///
 	/// This does not ensure that the reference counter in system is incremented appropriately, it
 	/// must be done by the caller or the keys will be leaked in storage.
-	fn inner_set_keys(who: &T::ValidatorId, keys: T::Keys) -> Result<Option<T::Keys>, DispatchError> {
+	fn inner_set_keys(
+		who: &T::ValidatorId,
+		keys: T::Keys,
+	) -> Result<Option<T::Keys>, DispatchError> {
 		let old_keys = Self::load_keys(who);
 
 		for id in T::Keys::key_ids() {
@@ -756,7 +772,8 @@ impl<T: Trait, Inner: FindAuthor<u32>> FindAuthor<T::ValidatorId>
 	for FindAccountFromAuthorIndex<T, Inner>
 {
 	fn find_author<'a, I>(digests: I) -> Option<T::ValidatorId>
-		where I: 'a + IntoIterator<Item=(ConsensusEngineId, &'a [u8])>
+	where
+		I: 'a + IntoIterator<Item = (ConsensusEngineId, &'a [u8])>,
 	{
 		let i = Inner::find_author(digests)?;
 
