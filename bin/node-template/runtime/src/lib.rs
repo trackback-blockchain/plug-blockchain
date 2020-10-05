@@ -244,7 +244,7 @@ construct_runtime!(
 	pub enum Runtime where
 		Block = Block,
 		NodeBlock = opaque::Block,
-		UncheckedExtrinsic = UncheckedExtrinsic
+		UncheckedExtrinsic = UncheckedExtrinsic,
 	{
 		System: system::{Module, Call, Storage, Config, Event},
 		RandomnessCollectiveFlip: randomness_collective_flip::{Module, Call, Storage},
@@ -257,7 +257,7 @@ construct_runtime!(
 		// Used for the module template in `./template.rs`
 		TemplateModule: template::{Module, Call, Storage, Event<T>},
 		ValidatorManager: prml_validator_manager::{Module, Call, Storage, Config<T>, Event<T>},
-		Session: pallet_session::{Module, Call, Storage, Config, Event},
+		Session: pallet_session::{Module, Call, Storage, Config<T>, Event},
 	}
 );
 

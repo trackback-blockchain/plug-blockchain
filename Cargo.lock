@@ -3683,6 +3683,7 @@ dependencies = [
  "futures 0.3.4",
  "log 0.4.8",
  "node-template-runtime",
+ "pallet-session",
  "sc-basic-authorship",
  "sc-cli",
  "sc-client",
